@@ -1,0 +1,97 @@
+@baseUrl = https://localhost:7212
+
+### Health check
+GET {{baseUrl}}/api/health
+
+### Create short URL
+POST {{baseUrl}}/api/urls
+Content-Type: application/json
+
+{
+  "originalUrl": "https://www.example.com/products/software-engineering/assessment",
+  "expiresAtUtc": null
+}
+### Resolve short URL
+GET {{baseUrl}}/api/urls/HNAf5zm
+
+### Get analytics
+GET {{baseUrl}}/api/urls/HNAf5zm/analytics
+
+### Invalid URL - should return 400
+POST {{baseUrl}}/api/urls
+Content-Type: application/json
+
+{
+  "originalUrl": "not-a-valid-url",
+  "expiresAtUtc": null
+}
+### Resolve short URL
+GET {{baseUrl}}/api/urls/HNAf5zm
+### Run agentic workflow
+POST {{baseUrl}}/api/workflows
+Content-Type: application/json
+
+{
+  "requirement": "Build a URL shortener service with core APIs, analytics, expiration, reliability and production-quality validation.",
+  "approvalGranted": false
+}
+### Start workflow - should pause for approval
+POST {{baseUrl}}/api/workflows
+Content-Type: application/json
+
+{
+  "requirement": "Build a URL shortener service with core APIs, analytics, expiration, reliability and production-quality validation.",
+  "approvalGranted": false
+}
+### Approve workflow
+POST {{baseUrl}}/api/workflows/8d80a157-68df-4910-b486-d7922d7d91c2/approve
+### Failure / retry demonstration
+POST {{baseUrl}}/api/workflows
+Content-Type: application/json
+
+{
+  "requirement": "Build a URL shortener service with core APIs, analytics, expiration, reliability and production-quality validation.",
+  "approvalGranted": false,
+  "simulateFailure": true
+}
+### Stop workflow
+POST {{baseUrl}}/api/workflows/8d80a157-68df-4910-b486-d7922d7d91c2/stop
+
+  ### Metrics verification
+POST {{baseUrl}}/api/workflows
+Content-Type: application/json
+
+{
+  "requirement": "Build a URL shortener service with core APIs, analytics, expiration, reliability and production-quality validation.",
+  "approvalGranted": true
+}
+### Greenfield scenario
+POST {{baseUrl}}/api/workflows
+Content-Type: application/json
+
+{
+  "requirement": "Build a URL shortener with core APIs, analytics and reliability.",
+  "approvalGranted": false,
+  "simulateFailure": false,
+  "scenario": "Greenfield"
+}
+### Brownfield scenario
+POST {{baseUrl}}/api/workflows
+Content-Type: application/json
+
+{
+  "requirement": "Add URL expiration to the existing URL shortener without breaking existing behavior.",
+  "approvalGranted": false,
+  "simulateFailure": false,
+  "scenario": "Brownfield"
+}
+### Ambiguous scenario
+POST {{baseUrl}}/api/workflows
+Content-Type: application/json
+
+{
+  "requirement": "Make the URL shortener more secure.",
+  "approvalGranted": false,
+  "simulateFailure": false,
+  "scenario": "Ambiguous"
+}

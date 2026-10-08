@@ -1,0 +1,16 @@
+<Solution>
+  <Folder Name="/,github/" />
+  <Folder Name="/,github/workflows/" />
+  <Folder Name="/docs/">
+    <File Path="architecture.md" />
+    <File Path="orchestration.md" />
+    <File Path="scenarios.md" />
+  </Folder>
+  <Project Path="UrlShortener.Api/UrlShortener.Api.csproj" />
+  <Project Path="UrlShortener.Application/UrlShortener.Application.csproj" />
+  <Project Path="UrlShortener.Domain/UrlShortener.Domain.csproj" />
+  <Project Path="UrlShortener.Infrastructure/UrlShortener.Infrastructure.csproj" />
+  <Project Path="UrlShortener.IntegrationTests/UrlShortener.IntegrationTests.csproj" />
+  <Project Path="UrlShortener.Orchestration/UrlShortener.Orchestration.csproj" />
+  <Project Path="UrlShortener.UnitTests/UrlShortener.UnitTests.csproj" />
+</Solution>
