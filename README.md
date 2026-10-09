@@ -253,16 +253,34 @@ Every task is evaluated by three policies before execution:
 
 ---
 
-## Swapping the agent provider
+## Agent provider — live LLM via Ollama (no API key required)
 
-IAgentProvider is the only interface between the orchestration engine and the AI backend.
-To use a live LLM, register a different implementation in Program.cs — no orchestration code changes required.
+The system ships with `OllamaAgentProvider` wired in by default.
+Ollama runs open-source LLMs (Llama 3, Phi-3, Mistral, etc.) **locally on your machine — free, no API key**.
 
-    // Current: deterministic simulation (no API key required)
-    builder.Services.AddScoped<IAgentProvider, DemoAgentProvider>();
+**To enable live AI reasoning:**
 
-    // Production: live Claude AI
-    builder.Services.AddScoped<IAgentProvider, ClaudeAgentProvider>();
+    # 1. Install Ollama  (https://ollama.com)
+    ollama pull llama3          # ~4 GB download, one-time
+
+    # 2. Ollama starts automatically — no extra step needed
+
+    # 3. Run the API — it will call Ollama for every agent task
+    cd UrlShortener.Api
+    dotnet run
+
+Configuration is in `appsettings.json`:
+
+    "Ollama": {
+      "BaseUrl": "http://localhost:11434",
+      "Model": "llama3",
+      "Enabled": true
+    }
+
+Set `"Enabled": false` to fall back to the deterministic `DemoAgentProvider` (no Ollama needed).
+
+`IAgentProvider` is the only interface between the orchestration engine and the AI backend.
+Swap to any other LLM (Claude, OpenAI, Azure OpenAI) by registering a different implementation — no orchestration code changes required.
 
 ---
 

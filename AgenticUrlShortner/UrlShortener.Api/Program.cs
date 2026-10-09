@@ -21,8 +21,24 @@ builder.Services.AddScoped<IUrlShortenerService, UrlShortenerService>();
 // Infrastructure services
 builder.Services.AddScoped<IUrlMappingRepository, UrlMappingRepository>();
 
-// Orchestration services
-builder.Services.AddScoped<IAgentProvider, DemoAgentProvider>();
+// Orchestration services — use Ollama (local LLM) when enabled, fall back to demo
+var ollamaEnabled = builder.Configuration.GetValue<bool>("Ollama:Enabled");
+var ollamaBaseUrl = builder.Configuration["Ollama:BaseUrl"] ?? "http://localhost:11434";
+var ollamaModel   = builder.Configuration["Ollama:Model"] ?? "llama3";
+
+if (ollamaEnabled)
+{
+    builder.Services.AddHttpClient<IAgentProvider, OllamaAgentProvider>(client =>
+    {
+        client.BaseAddress = new Uri(ollamaBaseUrl);
+        client.Timeout = TimeSpan.FromSeconds(90);
+    }).AddTypedClient<IAgentProvider>((http, _) =>
+        new OllamaAgentProvider(http, ollamaModel));
+}
+else
+{
+    builder.Services.AddScoped<IAgentProvider, DemoAgentProvider>();
+}
 builder.Services.AddScoped<IWorkflowPlanner, WorkflowPlanner>();
 builder.Services.AddScoped<WorkflowOrchestrator>();
 builder.Services.AddSingleton<IWorkflowStore, InMemoryWorkflowStore>();
