@@ -4,6 +4,7 @@ using UrlShortener.Application.Services;
 using UrlShortener.Infrastructure.Persistence;
 using UrlShortener.Infrastructure.Repositories;
 using UrlShortener.Api.Middleware;
+using System.Net.Http.Headers;
 using UrlShortener.Orchestration.Agents;
 using UrlShortener.Orchestration.Services;
 
@@ -21,13 +22,30 @@ builder.Services.AddScoped<IUrlShortenerService, UrlShortenerService>();
 // Infrastructure services
 builder.Services.AddScoped<IUrlMappingRepository, UrlMappingRepository>();
 
-// Orchestration services — use Ollama (local LLM) when enabled, fall back to demo
+// Agent provider priority: Groq (cloud, free) > Ollama (local, free) > Demo (no LLM)
+var groqApiKey    = builder.Configuration["Groq:ApiKey"] ?? string.Empty;
+var groqBaseUrl   = builder.Configuration["Groq:BaseUrl"] ?? "https://api.groq.com";
+var groqModel     = builder.Configuration["Groq:Model"] ?? "llama3-8b-8192";
+
 var ollamaEnabled = builder.Configuration.GetValue<bool>("Ollama:Enabled");
 var ollamaBaseUrl = builder.Configuration["Ollama:BaseUrl"] ?? "http://localhost:11434";
 var ollamaModel   = builder.Configuration["Ollama:Model"] ?? "llama3";
 
-if (ollamaEnabled)
+if (!string.IsNullOrWhiteSpace(groqApiKey))
 {
+    // Groq: free cloud LLM — sign up at console.groq.com (no credit card required)
+    builder.Services.AddHttpClient<IAgentProvider, GroqAgentProvider>(client =>
+    {
+        client.BaseAddress = new Uri(groqBaseUrl);
+        client.Timeout = TimeSpan.FromSeconds(45);
+        client.DefaultRequestHeaders.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", groqApiKey);
+    }).AddTypedClient<IAgentProvider>((http, _) =>
+        new GroqAgentProvider(http, groqModel));
+}
+else if (ollamaEnabled)
+{
+    // Ollama: free local LLM — install from https://ollama.com then: ollama pull llama3
     builder.Services.AddHttpClient<IAgentProvider, OllamaAgentProvider>(client =>
     {
         client.BaseAddress = new Uri(ollamaBaseUrl);
@@ -37,6 +55,7 @@ if (ollamaEnabled)
 }
 else
 {
+    // Demo: deterministic outputs with simulated ReAct tool-call traces (no LLM required)
     builder.Services.AddScoped<IAgentProvider, DemoAgentProvider>();
 }
 builder.Services.AddScoped<IWorkflowPlanner, WorkflowPlanner>();

@@ -61,7 +61,105 @@ public sealed class DemoAgentProvider : IAgentProvider
                 $"Scenario: {request.Scenario}. No specialised handler — generic completion recorded."
         };
 
-        return Task.FromResult(new AgentResult(Success: true, Output: output));
+        return Task.FromResult(new AgentResult(Success: true, Output: AddToolTrace(request.TaskName, request.Requirement, output)));
+    }
+
+    // Prepends a simulated ReAct tool-call trace so the output demonstrates
+    // agentic reasoning even when no live LLM is available.
+    private static string AddToolTrace(string taskName, string requirement, string finalAnswer)
+    {
+        var trace = taskName switch
+        {
+            "Analyze and normalize requirement" =>
+                $"""
+                [ReAct] TOOL_CALL: estimate_complexity | {requirement}
+                [ReAct] TOOL_RESULT: COMPLEXITY: MEDIUM — standard CRUD with analytics. Estimated effort: 3–5 days.
+
+                [ReAct] TOOL_CALL: check_security | {requirement}
+                [ReAct] TOOL_RESULT: SECURITY_RISKS: Open redirect risk — validate and whitelist redirect targets; API exposure — apply input validation.
+
+                [ReAct] Reasoning: requirement is clear and scoped. Security risks noted for architecture stage.
+                [ReAct] Final Answer:
+                """,
+
+            "Identify ambiguity, assumptions and required clarifications" =>
+                $"""
+                [ReAct] TOOL_CALL: query_codebase | domain
+                [ReAct] TOOL_RESULT: CODEBASE: Domain layer contains UrlMapping entity (ShortCode, LongUrl, ClickCount, ExpiresAt, CreatedAt).
+
+                [ReAct] Reasoning: cross-referencing requirement against existing domain model to surface gaps.
+                [ReAct] Final Answer:
+                """,
+
+            "Analyze existing codebase and impacted modules" =>
+                $"""
+                [ReAct] TOOL_CALL: list_modules
+                [ReAct] TOOL_RESULT: MODULES: UrlShortener.Domain | UrlShortener.Application | UrlShortener.Infrastructure | UrlShortener.Api | UrlShortener.Orchestration
+
+                [ReAct] TOOL_CALL: query_codebase | infrastructure
+                [ReAct] TOOL_RESULT: CODEBASE: Infrastructure uses EF Core 10 + SQLite. UrlShortenerDbContext. UrlMappingRepository implements IUrlMappingRepository.
+
+                [ReAct] TOOL_CALL: assess_risk | database schema change
+                [ReAct] TOOL_RESULT: RISK: HIGH — database schema change. Requires migration script, rollback plan, and data validation.
+
+                [ReAct] Reasoning: schema risk is HIGH — flagging for ChangeControlPolicy approval gate.
+                [ReAct] Final Answer:
+                """,
+
+            "Decompose requirement into engineering tasks" =>
+                $"""
+                [ReAct] TOOL_CALL: estimate_complexity | {requirement}
+                [ReAct] TOOL_RESULT: COMPLEXITY: MEDIUM — requires aggregation queries and UI. Estimated effort: 3–5 days.
+
+                [ReAct] TOOL_CALL: query_codebase | api
+                [ReAct] TOOL_RESULT: CODEBASE: API layer has UrlsController (CRUD + analytics), WorkflowsController (orchestration), HealthController.
+
+                [ReAct] Reasoning: decomposing based on complexity estimate and existing module structure.
+                [ReAct] Final Answer:
+                """,
+
+            "Produce architecture and design decisions" =>
+                $"""
+                [ReAct] TOOL_CALL: check_security | url redirect
+                [ReAct] TOOL_RESULT: SECURITY_RISKS: Open redirect risk — validate and whitelist redirect targets; API exposure — apply input validation and output encoding.
+
+                [ReAct] TOOL_CALL: assess_risk | api contract change
+                [ReAct] TOOL_RESULT: RISK: HIGH — API contract change. May break existing consumers. Version the endpoint.
+
+                [ReAct] Reasoning: security and API risks inform architecture decisions below.
+                [ReAct] Final Answer:
+                """,
+
+            "Implement required changes" =>
+                $"""
+                [ReAct] TOOL_CALL: query_codebase | application
+                [ReAct] TOOL_RESULT: CODEBASE: Application layer defines IUrlShortenerService with CreateShortUrl, ResolveUrl, GetAnalytics, DeleteUrl. Uses repository pattern.
+
+                [ReAct] TOOL_CALL: assess_risk | database migration
+                [ReAct] TOOL_RESULT: RISK: HIGH — database schema change. Requires migration script, rollback plan, and data validation.
+
+                [ReAct] Reasoning: queried existing interfaces before implementing to avoid duplication.
+                [ReAct] Final Answer:
+                """,
+
+            "Validate outputs, risks and quality gates" =>
+                $"""
+                [ReAct] TOOL_CALL: check_security | {requirement}
+                [ReAct] TOOL_RESULT: SECURITY_RISKS: Open redirect risk — validate and whitelist redirect targets; API exposure — apply input validation and output encoding.
+
+                [ReAct] TOOL_CALL: assess_risk | release deployment
+                [ReAct] TOOL_RESULT: RISK: LOW — isolated change with limited blast radius.
+
+                [ReAct] Reasoning: all identified security risks have documented mitigations. Proceeding to quality gate summary.
+                [ReAct] Final Answer:
+                """,
+
+            _ => string.Empty
+        };
+
+        return string.IsNullOrEmpty(trace)
+            ? finalAnswer
+            : trace + "\n" + finalAnswer;
     }
 
     // -------------------------------------------------------------------------
