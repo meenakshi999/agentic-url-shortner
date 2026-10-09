@@ -22,10 +22,11 @@ public static class AgentTools
         toolName = string.Empty;
         toolArg  = string.Empty;
 
-        if (!line.TrimStart().StartsWith("TOOL_CALL:", StringComparison.OrdinalIgnoreCase))
+        var trimmed = line.TrimStart();
+        if (!trimmed.StartsWith("TOOL_CALL:", StringComparison.OrdinalIgnoreCase))
             return false;
 
-        var body = line["TOOL_CALL:".Length..].Trim();
+        var body = trimmed["TOOL_CALL:".Length..].Trim();
         var sep  = body.IndexOf('|');
 
         if (sep < 0)

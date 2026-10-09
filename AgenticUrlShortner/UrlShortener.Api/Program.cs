@@ -60,7 +60,10 @@ else
 }
 builder.Services.AddScoped<IWorkflowPlanner, WorkflowPlanner>();
 builder.Services.AddScoped<WorkflowOrchestrator>();
-builder.Services.AddSingleton<IWorkflowStore, InMemoryWorkflowStore>();
+// SQLite-backed workflow store — workflows survive server restarts
+var workflowDb = builder.Configuration.GetConnectionString("WorkflowStore")
+    ?? "Data Source=workflows.db";
+builder.Services.AddSingleton<IWorkflowStore>(_ => new SqliteWorkflowStore(workflowDb));
 
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
