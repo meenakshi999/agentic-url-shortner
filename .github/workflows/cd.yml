@@ -22,10 +22,10 @@ jobs:
           dotnet-version: '10.0.x'
 
       - name: Restore
-        run: dotnet restore
+        run: dotnet restore AgenticUrlShortener/AgenticUrlShortener.slnx
 
       - name: Build
-        run: dotnet build --no-restore --configuration Release
+        run: dotnet build AgenticUrlShortener/AgenticUrlShortener.slnx --no-restore --configuration Release
 
       - name: Test
-        run: dotnet test --no-build --configuration Release
+        run: dotnet test AgenticUrlShortener/AgenticUrlShortener.slnx --no-build --configuration Release
