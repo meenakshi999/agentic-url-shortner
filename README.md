@@ -28,30 +28,21 @@ using a stateful, dependency-aware orchestration engine with controlled autonomy
 
 ## Architecture
 
-    ┌─────────────────────────┐
-    │       REST API           │
-    │   UrlShortener.Api       │
-    └────────────┬────────────┘
-                 │
-  ┌──────────────┼──────────────────┐
-  │                                 │
-  ▼                                 ▼
-┌────────────────────────┐   ┌──────────────────────────┐
-│  URL Shortener         │   │  Workflow Orchestrator    │
-│  Application           │   │  UrlShortener.Orchestration│
-└────────────┬───────────┘   └──────────────┬───────────┘
-             │                              │
-             ▼                              ▼
-┌────────────────────────┐   ┌──────────────────────────┐
-│  Domain                │   │  Agent Provider           │
-│  UrlMapping entity     │   │  IAgentProvider           │
-└────────────┬───────────┘   │  (Demo / Live LLM)        │
-             │               └──────────────────────────┘
-             ▼
-┌────────────────────────┐
-│  Infrastructure        │
-│  EF Core + SQLite      │
-└────────────────────────┘
+```mermaid
+graph TD
+    API[REST API<br/>UrlShortener.Api]
+    APP[URL Shortener<br/>Application]
+    ORCH[Workflow Orchestrator<br/>UrlShortener.Orchestration]
+    DOMAIN[Domain<br/>UrlMapping entity]
+    AGENT[Agent Provider<br/>IAgentProvider<br/>Demo / Live LLM]
+    INFRA[Infrastructure<br/>EF Core + SQLite]
+
+    API --> APP
+    API --> ORCH
+    APP --> DOMAIN
+    ORCH --> AGENT
+    DOMAIN --> INFRA
+```
 
 **Core design principle:** agents generate reasoning and outputs; the deterministic
 orchestration layer owns execution flow, dependency ordering, retries, rollback,
@@ -104,8 +95,7 @@ Every stage transition is gated by the policy engine before execution begins.
     │   ├── Policies/                  PolicyEngine, SecurityPolicy, ChangeControlPolicy, CompliancePolicy
     │   └── Services/                  WorkflowOrchestrator, RollbackService, DynamicReplanner
     ├── UrlShortener.UnitTests/        47 tests — orchestration, policy, metrics, rollback, re-planning
-    └── UrlShortener.IntegrationTests/ End-to-end API tests
-    AgenticUrlShortner/
+    ├── UrlShortener.IntegrationTests/ End-to-end API tests
     ├── architecture.md
     ├── orchestration.md
     ├── scenarios.md
