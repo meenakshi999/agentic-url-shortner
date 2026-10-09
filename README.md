@@ -28,20 +28,20 @@ using a stateful, dependency-aware orchestration engine with controlled autonomy
 
 ## Architecture
 
-```mermaid
-graph TD
-    API[REST API<br/>UrlShortener.Api]
-    APP[URL Shortener<br/>Application]
-    ORCH[Workflow Orchestrator<br/>UrlShortener.Orchestration]
-    DOMAIN[Domain<br/>UrlMapping entity]
-    AGENT[Agent Provider<br/>IAgentProvider<br/>Demo / Live LLM]
-    INFRA[Infrastructure<br/>EF Core + SQLite]
-
-    API --> APP
-    API --> ORCH
-    APP --> DOMAIN
-    ORCH --> AGENT
-    DOMAIN --> INFRA
+```
+REST API  (UrlShortener.Api)
+    |
+    +-------------------------------+
+    |                               |
+    v                               v
+URL Shortener Application    Workflow Orchestrator
+    |                         (UrlShortener.Orchestration)
+    v                               |
+Domain (UrlMapping)                 v
+    |                         Agent Provider
+    v                         (IAgentProvider)
+Infrastructure
+(EF Core + SQLite)
 ```
 
 **Core design principle:** agents generate reasoning and outputs; the deterministic
