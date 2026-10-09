@@ -133,36 +133,59 @@ Swagger UI: https://localhost:7212/swagger
 
 **Step 1 — Start a workflow**
 
-    POST /api/workflow
-    {
-      "requirement": "Build a URL shortener with analytics and expiration",
-      "scenario": "Greenfield",
-      "approvalGranted": false
-    }
+```http
+POST /api/workflows
+Content-Type: application/json
+```
 
-**Step 2 — Grant approval** (when status is WaitingForApproval)
+```json
+{
+  "requirement": "Build a URL shortener with analytics and expiration",
+  "scenario": "Greenfield"
+}
+```
 
-    POST /api/workflow/{workflowId}/approve
+**Step 2 — Check workflow status**
 
-**Step 3 — Resume**
+```http
+GET /api/workflows/{workflowId}
+```
 
-    POST /api/workflow/{workflowId}/resume
+**Step 3 — Approve the workflow**
+
+```http
+POST /api/workflows/{workflowId}/approve
+```
+
+The approval endpoint grants approval and resumes the workflow.
 
 **Step 4 — View reliability metrics**
 
-    GET /api/workflow/{workflowId}/metrics
+```http
+GET /api/workflows/{workflowId}/metrics
+```
 
-**Step 5 — Trigger retry and rollback**
+**Step 5 — Stop a workflow**
 
-Add "simulateFailure": true to the Step 1 request body.
+```http
+POST /api/workflows/{workflowId}/stop
+```
 
 **Step 6 — Trigger dynamic re-planning**
 
-    POST /api/workflow/{workflowId}/replan
-    {
-      "changedTaskId": "requirements",
-      "newOutput": "Updated: add rate limiting to the shortener API"
-    }
+```http
+POST /api/workflows/{workflowId}/replan
+Content-Type: application/json
+```
+
+```json
+{
+  "changedTaskId": "requirements",
+  "newOutput": "Updated: add rate limiting to the shortener API"
+}
+```
+
+Check the workflow status and metrics endpoints to inspect execution and outcomes.
 
 ---
 
@@ -178,20 +201,20 @@ Add "simulateFailure": true to the Step 1 request body.
 
 ## Key API endpoints
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | /api/workflow | Start a new workflow |
-| GET | /api/workflow/{id} | Get workflow state and audit trail |
-| POST | /api/workflow/{id}/approve | Grant human approval |
-| POST | /api/workflow/{id}/resume | Resume after approval |
-| POST | /api/workflow/{id}/stop | Safe stop |
-| POST | /api/workflow/{id}/replan | Trigger dynamic re-planning |
-| GET | /api/workflow/{id}/metrics | Reliability metrics and full audit trail |
-| POST | /api/urls | Shorten a URL |
-| GET | /{code} | Resolve — 302 redirect |
-| PATCH | /api/urls/{code}/deactivate | Deactivate a URL (returns 410 Gone) |
-| GET | /api/urls/{code}/analytics | Click analytics |
-| GET | /health | Health check |
+| Method | Endpoint                              | Description                                   |
+| ------ | ------------------------------------- | --------------------------------------------- |
+| POST   | `/api/workflows`                      | Start a new workflow                          |
+| GET    | `/api/workflows/{workflowId}`         | Get workflow state                            |
+| POST   | `/api/workflows/{workflowId}/approve` | Approve and resume workflow                   |
+| POST   | `/api/workflows/{workflowId}/stop`    | Stop a workflow                               |
+| POST   | `/api/workflows/{workflowId}/replan`  | Trigger dynamic re-planning                   |
+| GET    | `/api/workflows/{workflowId}/metrics` | Get reliability metrics and audit information |
+| POST   | `/api/urls`                           | Create a short URL                            |
+| GET    | `/api/urls/{shortCode}`               | Resolve a short URL                           |
+| GET    | `/api/urls/{shortCode}/analytics`     | Get click analytics                           |
+| DELETE | `/api/urls/{shortCode}`               | Delete a short URL                            |
+| GET    | `/api/health`                         | Health check                                  |
+
 
 ---
 
