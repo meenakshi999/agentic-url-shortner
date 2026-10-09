@@ -14,6 +14,7 @@ public sealed class WorkflowOrchestrator
     private readonly RollbackService _rollbackService = new();
     private readonly DynamicReplanner _replanner = new();
     private readonly PolicyEngine _policyEngine = PolicyEngine.Default();
+    private readonly AgentOutputAnalyzer _outputAnalyzer = new();
 
     public WorkflowOrchestrator(
     IWorkflowPlanner planner,
@@ -115,6 +116,28 @@ public sealed class WorkflowOrchestrator
                 context.CompletedStages.Add(task.Id);
                 context.Decisions.Add($"{task.Id}: {result.Output}");
                 context.AddAuditEntry($"Completed task: {task.Id} in {latencyMs}ms");
+
+                // Intelligent routing — let the LLM's output influence execution flow
+                var routing = _outputAnalyzer.Analyze(task.Id, result.Output, context);
+                if (routing.Decision == RoutingDecision.Block)
+                {
+                    context.Status = WorkflowStatus.Failed;
+                    context.CurrentStage = WorkflowStage.Failed;
+                    context.Metrics.TasksFailed++;
+                    context.Metrics.CompletedAtUtc = DateTime.UtcNow;
+                    context.AddAuditEntry($"Workflow blocked by agent output analysis: {routing.Reason}");
+                    return;
+                }
+                if (routing.Decision == RoutingDecision.RequireApproval && !context.ApprovalGranted)
+                {
+                    context.Status = WorkflowStatus.WaitingForApproval;
+                    context.CurrentStage = WorkflowStage.HumanApproval;
+                    context.ApprovalRequired = true;
+                    context.AddAuditEntry($"Approval required by agent output analysis: {routing.Reason}");
+                    _workflowStore.Save(context);
+                    return;
+                }
+
                 return;
             }
             catch (Exception ex)

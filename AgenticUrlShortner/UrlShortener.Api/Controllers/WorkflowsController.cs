@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿using System.Text.Json;
+using Microsoft.AspNetCore.Mvc;
 using UrlShortener.Api.Models;
 using UrlShortener.Orchestration.Models;
 using UrlShortener.Orchestration.Services;
@@ -113,6 +114,85 @@ public class WorkflowsController : ControllerBase
         if (context is null) return NotFound();
         return Ok(context);
     }
+    /// <summary>
+    /// Server-Sent Events stream — pushes live workflow events as tasks complete.
+    /// Connect with: curl -N https://localhost:7212/api/workflows/{id}/stream
+    /// Each event is a JSON line prefixed with "data: ".
+    /// </summary>
+    [HttpGet("{workflowId:guid}/stream")]
+    public async Task StreamEvents(Guid workflowId, CancellationToken cancellationToken)
+    {
+        Response.Headers["Content-Type"]  = "text/event-stream";
+        Response.Headers["Cache-Control"] = "no-cache";
+        Response.Headers["X-Accel-Buffering"] = "no";
+
+        var seenAuditCount    = 0;
+        var seenOutputCount   = 0;
+        var lastStatus        = string.Empty;
+
+        async Task SendAsync(string eventType, object payload)
+        {
+            var json = JsonSerializer.Serialize(payload);
+            await Response.WriteAsync($"event: {eventType}\ndata: {json}\n\n", cancellationToken);
+            await Response.Body.FlushAsync(cancellationToken);
+        }
+
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            var context = _workflowStore.Get(workflowId);
+            if (context is null)
+            {
+                await SendAsync("error", new { message = "Workflow not found." });
+                return;
+            }
+
+            // Stream new audit entries
+            var newAuditEntries = context.AuditTrail.Skip(seenAuditCount).ToList();
+            foreach (var entry in newAuditEntries)
+            {
+                await SendAsync("audit", new { entry });
+                seenAuditCount++;
+            }
+
+            // Stream new task outputs
+            var allOutputs = context.Outputs.ToList();
+            var newOutputs = allOutputs.Skip(seenOutputCount).ToList();
+            foreach (var (taskId, output) in newOutputs)
+            {
+                await SendAsync("task_output", new { taskId, preview = output[..Math.Min(300, output.Length)] });
+                seenOutputCount++;
+            }
+
+            // Stream status changes
+            var currentStatus = context.Status.ToString();
+            if (currentStatus != lastStatus)
+            {
+                await SendAsync("status", new { status = currentStatus, stage = context.CurrentStage.ToString() });
+                lastStatus = currentStatus;
+            }
+
+            // Terminal states — close the stream
+            if (context.Status is WorkflowStatus.Completed or WorkflowStatus.Failed or WorkflowStatus.Stopped)
+            {
+                await SendAsync("done", new
+                {
+                    status  = context.Status.ToString(),
+                    tasksCompleted = context.Metrics.TasksCompleted,
+                    successRate    = context.Metrics.SuccessRate
+                });
+                return;
+            }
+
+            // Waiting for approval — notify and keep streaming (approval may come via POST)
+            if (context.Status == WorkflowStatus.WaitingForApproval)
+            {
+                await SendAsync("approval_required", new { message = $"POST /api/workflows/{workflowId}/approve to resume." });
+            }
+
+            await Task.Delay(750, cancellationToken);
+        }
+    }
+
     [HttpGet("{workflowId:guid}/metrics")]
     public IActionResult GetMetrics(Guid workflowId)
     {

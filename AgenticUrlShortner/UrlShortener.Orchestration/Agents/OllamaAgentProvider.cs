@@ -38,31 +38,11 @@ public sealed class OllamaAgentProvider : IAgentProvider
 
         try
         {
-            var payload = new
-            {
-                model = _model,
-                prompt,
-                stream = false,
-                options = new { temperature = 0.3, num_predict = 512 }
-            };
+            var finalOutput = await RunReActLoopAsync(prompt, cancellationToken);
 
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            cts.CancelAfter(TimeSpan.FromSeconds(60));
-
-            var response = await _http.PostAsJsonAsync(
-                "/api/generate", payload, cts.Token);
-
-            if (!response.IsSuccessStatusCode)
-                return await _fallback.ExecuteAsync(request, cancellationToken);
-
-            var json = await response.Content.ReadFromJsonAsync<JsonElement>(
-                cancellationToken: cts.Token);
-
-            var output = json.GetProperty("response").GetString() ?? string.Empty;
-
-            return string.IsNullOrWhiteSpace(output)
+            return string.IsNullOrWhiteSpace(finalOutput)
                 ? await _fallback.ExecuteAsync(request, cancellationToken)
-                : new AgentResult(Success: true, Output: output.Trim());
+                : new AgentResult(Success: true, Output: finalOutput.Trim());
         }
         catch (Exception)
         {
@@ -70,6 +50,99 @@ public sealed class OllamaAgentProvider : IAgentProvider
             return await _fallback.ExecuteAsync(request, cancellationToken);
         }
     }
+
+    private async Task<string> RunReActLoopAsync(string initialPrompt, CancellationToken cancellationToken)
+    {
+        const int maxIterations = 3;
+        var conversationPrompt = initialPrompt + ToolInstructions();
+        var accumulatedToolResults = new System.Text.StringBuilder();
+
+        for (var i = 0; i < maxIterations; i++)
+        {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            cts.CancelAfter(TimeSpan.FromSeconds(60));
+
+            var payload = new
+            {
+                model = _model,
+                prompt = conversationPrompt,
+                stream = false,
+                options = new { temperature = 0.3, num_predict = 600 }
+            };
+
+            var response = await _http.PostAsJsonAsync("/api/generate", payload, cts.Token);
+            if (!response.IsSuccessStatusCode)
+                return string.Empty;
+
+            var json = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cts.Token);
+            var output = json.GetProperty("response").GetString() ?? string.Empty;
+
+            // Check if the LLM wants to call a tool
+            var toolCallLine = output
+                .Split('\n')
+                .FirstOrDefault(l => l.TrimStart().StartsWith("TOOL_CALL:", StringComparison.OrdinalIgnoreCase));
+
+            if (toolCallLine is null)
+                return output; // No tool call — final answer
+
+            if (!AgentTools.TryParse(toolCallLine, out var toolName, out var toolArg))
+                return output;
+
+            if (!AgentTools.All.TryGetValue(toolName, out var tool))
+                return output;
+
+            var toolResult = tool(toolArg);
+            accumulatedToolResults.AppendLine($"\nTOOL_RESULT ({toolName}): {toolResult}");
+
+            // Inject tool result and ask LLM to continue
+            conversationPrompt = initialPrompt +
+                accumulatedToolResults +
+                "\nUsing the tool results above, now provide your complete final answer. Do NOT emit any more TOOL_CALL lines.";
+        }
+
+        // Fallback: one final call asking for the answer without tools
+        return await CallOllamaAsync(
+            initialPrompt + accumulatedToolResults + "\nProvide your final answer now.",
+            cancellationToken);
+    }
+
+    private async Task<string> CallOllamaAsync(string prompt, CancellationToken cancellationToken)
+    {
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        cts.CancelAfter(TimeSpan.FromSeconds(60));
+
+        var payload = new
+        {
+            model = _model,
+            prompt,
+            stream = false,
+            options = new { temperature = 0.3, num_predict = 600 }
+        };
+
+        var response = await _http.PostAsJsonAsync("/api/generate", payload, cts.Token);
+        if (!response.IsSuccessStatusCode) return string.Empty;
+
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cts.Token);
+        return json.GetProperty("response").GetString() ?? string.Empty;
+    }
+
+    private static string ToolInstructions() =>
+        """
+
+
+        You have access to the following tools. To use one, emit exactly one line in this format:
+        TOOL_CALL: tool_name | argument
+
+        Available tools:
+        - estimate_complexity | <feature description>  — estimates effort and complexity
+        - check_security      | <input or feature>     — identifies security risks
+        - query_codebase      | <module name>          — returns facts about the existing codebase
+        - list_modules        | (no argument needed)   — lists all solution modules
+        - assess_risk         | <change description>   — assesses deployment risk
+
+        Use a tool ONLY if it would meaningfully improve your answer.
+        After the tool result is provided, give your complete final answer without any more TOOL_CALL lines.
+        """;
 
     private static string BuildPrompt(AgentRequest request)
     {
