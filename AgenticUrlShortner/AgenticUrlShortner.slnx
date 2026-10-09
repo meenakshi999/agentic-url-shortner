@@ -3,8 +3,11 @@
   <Folder Name="/,github/workflows/" />
   <Folder Name="/docs/">
     <File Path="architecture.md" />
+    <File Path="engineering-summary.md" />
     <File Path="orchestration.md" />
     <File Path="scenarios.md" />
+    <File Path="setup.md" />
+    <File Path="testing.md" />
   </Folder>
   <Project Path="UrlShortener.Api/UrlShortener.Api.csproj" />
   <Project Path="UrlShortener.Application/UrlShortener.Application.csproj" />

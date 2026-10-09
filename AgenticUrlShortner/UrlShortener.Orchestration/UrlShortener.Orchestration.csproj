@@ -11,8 +11,4 @@
     <ProjectReference Include="..\UrlShortener.Domain\UrlShortener.Domain.csproj" />
   </ItemGroup>
 
-  <ItemGroup>
-    <Folder Include="Policies\" />
-  </ItemGroup>
-
 </Project>

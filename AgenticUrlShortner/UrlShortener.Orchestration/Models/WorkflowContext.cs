@@ -24,11 +24,18 @@ public sealed class WorkflowContext
     public bool ApprovalRequired { get; set; }
 
     public bool ApprovalGranted { get; set; }
+
     public bool SimulateFailure { get; set; }
 
     public bool StopRequested { get; set; }
+
     public WorkflowMetrics Metrics { get; set; } = new();
+
     public WorkflowScenario Scenario { get; set; }
+
+    public List<string> ReplanLog { get; } = new();
+
+    public int ReplanCount { get; set; }
 
     public void AddAuditEntry(string message)
     {

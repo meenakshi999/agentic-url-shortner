@@ -34,7 +34,17 @@ builder.Services.AddControllers()
             new System.Text.Json.Serialization.JsonStringEnumConverter());
     });
 
-builder.Services.AddOpenApi();
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen(options =>
+{
+    options.SwaggerDoc("v1", new()
+    {
+        Title = "Agentic URL Shortener API",
+        Version = "v1",
+        Description = "URL Shortener service with agentic SDLC orchestration"
+    });
+});
+
 
 var app = builder.Build();
 
@@ -47,10 +57,13 @@ using (var scope = app.Services.CreateScope())
     await dbContext.Database.EnsureCreatedAsync();
 }
 
-if (app.Environment.IsDevelopment())
+app.UseSwagger();
+app.UseSwaggerUI(options =>
 {
-    app.MapOpenApi();
-}
+    options.SwaggerEndpoint("/swagger/v1/swagger.json", "Agentic URL Shortener v1");
+    options.RoutePrefix = "swagger";
+});
+
 
 app.UseHttpsRedirection();
 

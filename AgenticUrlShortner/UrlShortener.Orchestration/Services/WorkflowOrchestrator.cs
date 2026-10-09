@@ -1,5 +1,6 @@
 ﻿using UrlShortener.Orchestration.Agents;
 using UrlShortener.Orchestration.Models;
+using UrlShortener.Orchestration.Policies;
 
 namespace UrlShortener.Orchestration.Services;
 
@@ -10,6 +11,9 @@ public sealed class WorkflowOrchestrator
     private readonly IWorkflowPlanner _planner;
     private readonly IAgentProvider _agentProvider;
     private readonly IWorkflowStore _workflowStore;
+    private readonly RollbackService _rollbackService = new();
+    private readonly DynamicReplanner _replanner = new();
+    private readonly PolicyEngine _policyEngine = PolicyEngine.Default();
 
     public WorkflowOrchestrator(
     IWorkflowPlanner planner,
@@ -36,194 +40,112 @@ public sealed class WorkflowOrchestrator
             ApprovalGranted = approvalGranted,
             SimulateFailure = simulateFailure,
             Scenario = scenario,
-            Metrics = new WorkflowMetrics
-            {
-                StartedAtUtc = DateTime.UtcNow
-            }
+            Metrics = new WorkflowMetrics { StartedAtUtc = DateTime.UtcNow }
         };
+
         _workflowStore.Save(context);
-        context.AddAuditEntry(
-            $"Workflow started: {context.WorkflowId}");
+        context.AddAuditEntry($"Workflow started: {context.WorkflowId}");
 
-        var plan = _planner.CreatePlan(
-    requirement,
-    scenario);
+        var plan = _planner.CreatePlan(requirement, scenario);
+        context.AddAuditEntry($"Plan created with {plan.Tasks.Count} tasks.");
 
-        context.AddAuditEntry(
-            $"Plan created with {plan.Tasks.Count} tasks.");
-
-        while (plan.Tasks.Any(task => !task.IsCompleted))
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            if (context.StopRequested)
-            {
-                context.Status = WorkflowStatus.Stopped;
-                context.CurrentStage = WorkflowStage.Stopped;
-
-                context.AddAuditEntry(
-                    "Workflow stopped by safety control.");
-                _workflowStore.Save(context);
-                return context;
-            }
-
-            var approvalTask = plan.Tasks
-                .FirstOrDefault(task =>
-                    !task.IsCompleted &&
-                    task.RequiresApproval &&
-                    task.Dependencies.All(
-                        dependency =>
-                            plan.GetTask(dependency)?.IsCompleted == true));
-
-            if (approvalTask is not null)
-            {
-                context.Status = WorkflowStatus.WaitingForApproval;
-                context.CurrentStage = WorkflowStage.HumanApproval;
-                context.ApprovalRequired = true;
-
-                context.AddAuditEntry(
-                    "Workflow paused for human approval.");
-
-                if (!context.ApprovalGranted)
-                {
-                    _workflowStore.Save(context);
-                    return context;
-                }
-
-                approvalTask.IsCompleted = true;
-
-                context.CompletedStages.Add(approvalTask.Id);
-
-                context.AddAuditEntry(
-                    "Human approval granted.");
-
-                continue;
-            }
-
-            var readyTasks = plan.Tasks
-                .Where(task =>
-                    !task.IsCompleted &&
-                    !task.RequiresApproval &&
-                    task.Dependencies.All(
-                        dependency =>
-                            plan.GetTask(dependency)?.IsCompleted == true))
-                .ToList();
-
-            if (readyTasks.Count == 0)
-            {
-                context.Status = WorkflowStatus.Failed;
-                context.CurrentStage = WorkflowStage.Failed;
-
-                context.AddAuditEntry(
-                    "Workflow stopped because no executable task was available.");
-                _workflowStore.Save(context);
-                return context;
-            }
-
-            context.AddAuditEntry(
-                $"Executing {readyTasks.Count} ready task(s).");
-
-            var executions = readyTasks
-                .Select(task =>
-                    ExecuteTaskAsync(
-                        task,
-                        context,
-                        cancellationToken));
-
-            await Task.WhenAll(executions);
-
-            _workflowStore.Save(context);
-
-            if (context.Status == WorkflowStatus.Failed)
-            {
-                return context;
-            }
-        }
-
-        context.Status = WorkflowStatus.Completed;
-        context.CurrentStage = WorkflowStage.Completed;
-
-        context.AddAuditEntry(
-            "Workflow completed successfully.");
-        context.Metrics.CompletedAtUtc = DateTime.UtcNow;
-        context.Metrics.RetryCount = context.RetryCount;
-        _workflowStore.Save(context);
+        await RunTaskLoopAsync(plan, context, cancellationToken);
         return context;
     }
 
-    private async Task ExecuteTaskAsync(
-    WorkflowTask task,
-    WorkflowContext context,
-    CancellationToken cancellationToken)
+
+    private async Task ExecuteTaskAsync(WorkflowTask task, WorkflowPlan plan, WorkflowContext context, CancellationToken cancellationToken)
     {
         context.CurrentStage = task.Stage;
+        context.AddAuditEntry($"Starting task: {task.Id}");
+        // Policy guardrail check before execution
+        var policyResult = await _policyEngine.EvaluateAsync(task, context);
+        if (policyResult.Action == PolicyAction.Deny)
+        {
+            context.Status = WorkflowStatus.Failed;
+            context.CurrentStage = WorkflowStage.Failed;
+            context.Metrics.TasksFailed++;
+            context.Metrics.CompletedAtUtc = DateTime.UtcNow;
+            return;
+        }
+        if (policyResult.Action == PolicyAction.RequireApproval && !context.ApprovalGranted)
+        {
+            context.Status = WorkflowStatus.WaitingForApproval;
+            context.CurrentStage = WorkflowStage.HumanApproval;
+            context.ApprovalRequired = true;
+            _workflowStore.Save(context);
+            return;
+        }
 
-        context.AddAuditEntry(
-            $"Starting task: {task.Id}");
+        task.StartedAtUtc = DateTime.UtcNow;
+        DateTime? lastFailedAt = null;
 
         while (task.RetryCount <= MaxRetries)
         {
             try
             {
                 var request = new AgentRequest(
-    task.Name,
-    context.Requirement,
-    context.Outputs,
-    context.Scenario,
-    context.SimulateFailure);
+                    task.Name,
+                    context.Requirement,
+                    context.Outputs,
+                    context.Scenario,
+                    context.SimulateFailure);
 
-                var result = await _agentProvider.ExecuteAsync(
-                    request,
-                    cancellationToken);
+                var result = await _agentProvider.ExecuteAsync(request, cancellationToken);
 
                 if (!result.Success)
+                    throw new InvalidOperationException(result.Error ?? "Agent execution failed.");
+
+                task.CompletedAtUtc = DateTime.UtcNow;
+
+                // Record per-task latency
+                var latencyMs = (long)(task.CompletedAtUtc.Value - task.StartedAtUtc!.Value).TotalMilliseconds;
+                context.Metrics.TaskLatenciesMs[task.Id] = latencyMs;
+
+                // Record MTTR if this task recovered from a failure
+                if (lastFailedAt.HasValue)
                 {
-                    throw new InvalidOperationException(
-                        result.Error ?? "Agent execution failed.");
+                    var recoveryMs = (task.CompletedAtUtc.Value - lastFailedAt.Value).TotalMilliseconds;
+                    context.Metrics.RecoveryTimesMs.Add(recoveryMs);
                 }
 
                 context.Outputs[task.Id] = result.Output;
-
                 task.IsCompleted = true;
                 context.Metrics.TasksCompleted++;
-
                 context.CompletedStages.Add(task.Id);
-
-                context.Decisions.Add(
-                    $"{task.Id}: {result.Output}");
-
-                context.AddAuditEntry(
-                    $"Completed task: {task.Id}");
-
+                context.Decisions.Add($"{task.Id}: {result.Output}");
+                context.AddAuditEntry($"Completed task: {task.Id} in {latencyMs}ms");
                 return;
             }
             catch (Exception ex)
             {
                 if (task.RetryCount >= MaxRetries)
                 {
+                    task.FailedAtUtc = DateTime.UtcNow;
                     context.Status = WorkflowStatus.Failed;
                     context.CurrentStage = WorkflowStage.Failed;
                     context.Metrics.TasksFailed++;
                     context.Metrics.RetryCount = context.RetryCount;
                     context.Metrics.CompletedAtUtc = DateTime.UtcNow;
+                    context.AddAuditEntry($"Task failed after {MaxRetries + 1} attempts: {task.Id}");
+                    context.AddAuditEntry($"Final error: {ex.Message}");
 
-                    context.AddAuditEntry(
-                        $"Task failed after {MaxRetries + 1} attempts: {task.Id}");
-
-                    context.AddAuditEntry(
-                        $"Final error: {ex.Message}");
+                    // Rollback any downstream tasks that depended on this one
+                    var plans = _planner.CreatePlan(context.Requirement, context.Scenario);
+                    _rollbackService.RollbackDownstream(task, plans, context);
 
                     return;
                 }
 
+
+                lastFailedAt = DateTime.UtcNow;
                 task.RetryCount++;
                 context.RetryCount++;
-
-                context.AddAuditEntry(
-                    $"Retry {task.RetryCount} for {task.Id}: {ex.Message}");
+                context.AddAuditEntry($"Retry {task.RetryCount} for {task.Id}: {ex.Message}");
             }
         }
     }
+
     public WorkflowContext? Approve(Guid workflowId)
     {
         var context = _workflowStore.Get(workflowId);
@@ -268,54 +190,65 @@ public sealed class WorkflowOrchestrator
 
         return context;
     }
-    public async Task<WorkflowContext?> ResumeAsync(
-    Guid workflowId,
-    CancellationToken cancellationToken = default)
+    public async Task<WorkflowContext?> ResumeAsync(Guid workflowId,CancellationToken cancellationToken = default)
     {
         var context = _workflowStore.Get(workflowId);
+        if (context is null) return null;
+        if (!context.ApprovalGranted) return context;
 
-        if (context is null)
-        {
-            return null;
-        }
-
-        if (!context.ApprovalGranted)
-        {
-            return context;
-        }
-
-        var plan = _planner.CreatePlan(
-    context.Requirement,
-    context.Scenario);
+        var plan = _planner.CreatePlan(context.Requirement, context.Scenario);
 
         foreach (var task in plan.Tasks)
         {
             if (context.CompletedStages.Contains(task.Id))
-            {
                 task.IsCompleted = true;
-            }
         }
 
-        var approvalTask = plan.Tasks
-            .FirstOrDefault(task => task.RequiresApproval);
-
-        if (approvalTask is not null &&
-            context.ApprovalGranted)
+        var approvalTask = plan.Tasks.FirstOrDefault(t => t.RequiresApproval);
+        if (approvalTask is not null && context.ApprovalGranted)
         {
             approvalTask.IsCompleted = true;
-
             context.CompletedStages.Add(approvalTask.Id);
-
-            context.AddAuditEntry(
-                "Human approval task completed.");
+            context.AddAuditEntry("Human approval task completed.");
         }
 
         context.Status = WorkflowStatus.Running;
         context.ApprovalRequired = false;
+        context.AddAuditEntry("Workflow resumed after human approval.");
 
-        context.AddAuditEntry(
-            "Workflow resumed after human approval.");
+        await RunTaskLoopAsync(plan, context, cancellationToken);
+        return context;
+    }
 
+    public async Task<WorkflowContext?> ReplanAndResumeAsync(Guid workflowId,string changedTaskId,string newOutput,CancellationToken cancellationToken = default)
+    {
+        var context = _workflowStore.Get(workflowId);
+        if (context is null) return null;
+
+        var plan = _planner.CreatePlan(context.Requirement, context.Scenario);
+
+        // Restore already-completed task state
+        foreach (var task in plan.Tasks)
+        {
+            if (context.CompletedStages.Contains(task.Id))
+                task.IsCompleted = true;
+        }
+
+        var invalidated = _replanner.Replan(changedTaskId, newOutput, plan, context);
+
+        if (invalidated.Count == 0)
+        {
+            context.AddAuditEntry("Re-plan requested but no output change detected. Workflow unchanged.");
+            return context;
+        }
+
+        _workflowStore.Save(context);
+
+        // Re-execute only the invalidated tasks by resuming the workflow
+        return await ResumeAsync(workflowId, cancellationToken);
+    }
+    private async Task RunTaskLoopAsync(WorkflowPlan plan,WorkflowContext context,CancellationToken cancellationToken)
+    {
         while (plan.Tasks.Any(task => !task.IsCompleted))
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -324,69 +257,70 @@ public sealed class WorkflowOrchestrator
             {
                 context.Status = WorkflowStatus.Stopped;
                 context.CurrentStage = WorkflowStage.Stopped;
-
-                context.AddAuditEntry(
-                    "Workflow stopped by safety control.");
-
+                context.AddAuditEntry("Workflow stopped by safety control.");
                 _workflowStore.Save(context);
+                return;
+            }
 
-                return context;
+            var approvalTask = plan.Tasks
+                .FirstOrDefault(task =>
+                    !task.IsCompleted &&
+                    task.RequiresApproval &&
+                    task.Dependencies.All(dep => plan.GetTask(dep)?.IsCompleted == true));
+
+            if (approvalTask is not null)
+            {
+                context.Status = WorkflowStatus.WaitingForApproval;
+                context.CurrentStage = WorkflowStage.HumanApproval;
+                context.ApprovalRequired = true;
+                context.AddAuditEntry("Workflow paused for human approval.");
+
+                if (!context.ApprovalGranted)
+                {
+                    _workflowStore.Save(context);
+                    return;
+                }
+
+                approvalTask.IsCompleted = true;
+                context.CompletedStages.Add(approvalTask.Id);
+                context.AddAuditEntry("Human approval granted.");
+                continue;
             }
 
             var readyTasks = plan.Tasks
                 .Where(task =>
                     !task.IsCompleted &&
                     !task.RequiresApproval &&
-                    task.Dependencies.All(
-                        dependency =>
-                            plan.GetTask(dependency)?.IsCompleted == true))
+                    task.Dependencies.All(dep => plan.GetTask(dep)?.IsCompleted == true))
                 .ToList();
 
             if (readyTasks.Count == 0)
             {
                 context.Status = WorkflowStatus.Failed;
                 context.CurrentStage = WorkflowStage.Failed;
-
-                context.AddAuditEntry(
-                    "Workflow could not resume because dependencies were not satisfied.");
-
+                context.AddAuditEntry("Workflow stopped: no executable task available.");
                 _workflowStore.Save(context);
-
-                return context;
+                return;
             }
 
-            var executions = readyTasks.Select(task =>
-                ExecuteTaskAsync(
-                    task,
-                    context,
-                    cancellationToken));
+            context.AddAuditEntry($"Executing {readyTasks.Count} ready task(s) in parallel.");
 
-            await Task.WhenAll(executions);
+            await Task.WhenAll(readyTasks.Select(task =>
+                ExecuteTaskAsync(task, plan, context, cancellationToken)));
 
             _workflowStore.Save(context);
 
-            if (context.Status == WorkflowStatus.Failed)
-            {
-                context.Metrics.CompletedAtUtc = DateTime.UtcNow;
-                context.Metrics.RetryCount = context.RetryCount;
+            if (context.Status is WorkflowStatus.Failed or WorkflowStatus.WaitingForApproval)
+                return;
 
-                _workflowStore.Save(context);
-
-                return context;
-            }
         }
 
         context.Status = WorkflowStatus.Completed;
         context.CurrentStage = WorkflowStage.Completed;
-
         context.Metrics.CompletedAtUtc = DateTime.UtcNow;
         context.Metrics.RetryCount = context.RetryCount;
-
-        context.AddAuditEntry(
-            "Workflow completed successfully after approval.");
-
+        context.AddAuditEntry("Workflow completed successfully.");
         _workflowStore.Save(context);
-
-        return context;
     }
+
 }
