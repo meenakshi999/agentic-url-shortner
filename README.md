@@ -105,7 +105,7 @@ Every stage transition is gated by the policy engine before execution begins.
     │   └── Services/                  WorkflowOrchestrator, RollbackService, DynamicReplanner
     ├── UrlShortener.UnitTests/        47 tests — orchestration, policy, metrics, rollback, re-planning
     └── UrlShortener.IntegrationTests/ End-to-end API tests
-    docs/
+    AgenticUrlShortner/
     ├── architecture.md
     ├── orchestration.md
     ├── scenarios.md
@@ -117,7 +117,7 @@ Every stage transition is gated by the policy engine before execution begins.
 
 ## Quick start
 
-See [docs/setup.md](docs/setup.md) for full instructions.
+See [setup.md](AgenticUrlShortner/setup.md) for full instructions.
 
     git clone https://github.com/meenakshi999/agentic-url-shortner.git
     cd agentic-url-shortner/AgenticUrlShortner
@@ -254,12 +254,12 @@ Every task is evaluated by three policies before execution:
 
 | Document | Description |
 |----------|-------------|
-| [Architecture](docs/architecture.md) | System design, component diagram, key decisions |
-| [Orchestration](docs/orchestration.md) | Lifecycle stages, dependency graph, governance model |
-| [Scenarios](docs/scenarios.md) | Greenfield, Brownfield, Ambiguous walkthroughs |
-| [Setup](docs/setup.md) | Prerequisites, build, run, API walkthrough |
-| [Testing](docs/testing.md) | Strategy, limitations, trade-offs |
-| [Engineering Summary](docs/engineering-summary.md) | Plan, artifacts, risks, assumptions, limitations |
+| [Architecture](AgenticUrlShortner/architecture.md) | System design, component diagram, key decisions |
+| [Orchestration](AgenticUrlShortner/orchestration.md) | Lifecycle stages, dependency graph, governance model |
+| [Scenarios](AgenticUrlShortner/scenarios.md) | Greenfield, Brownfield, Ambiguous walkthroughs |
+| [Setup](AgenticUrlShortner/setup.md) | Prerequisites, build, run, API walkthrough |
+| [Testing](AgenticUrlShortner/testing.md) | Strategy, limitations, trade-offs |
+| [Engineering Summary](AgenticUrlShortner/engineering-summary.md) | Plan, artifacts, risks, assumptions, limitations |
 
 ---
 
